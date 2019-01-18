@@ -1,19 +1,134 @@
 import tensorflow as tf
 import numpy as np
 import gym
+import random
+import matplotlib.pyplot as plt
+from collections import deque
+
+plt.ion()
+
+
+class Experience:
+    def __init__(self, observation, action, reward, terminal):
+        self.observation = observation
+        self.action = action
+        self.reward = reward
+        self.terminal = terminal
+
+        @property
+        def is_terminal(self):
+            return self.next_observation is None
+
+
+class ReplayBuffer:
+    def __init__(self, size=100):
+        self.size = size
+        self._experiences = []
+        self._next_to_overwrite = 0
+
+    def _is_full(self):
+        return len(self._experiences) == self.size
+
+    def add(self, experience: Experience):
+        if self._is_full():
+            self._experiences[self._next_to_overwrite] = experience
+            self._next_to_overwrite = (self._next_to_overwrite + 1) % self.size
+        else:
+            self._experiences.append(experience)
+
+    def sample(self, batch_size):
+        return random.choices(self._experiences, k=batch_size)
+
+    def __len__(self):
+        return len(self._experiences)
+
+
+class MyEnvironment:
+
+    def __init__(self, env, state_size=4):
+        self.env = env
+        self.state_size = state_size
+        self.obs_buffer = deque(maxlen=state_size)
+
+
+    def step(self, action):
+        obs, rew, done, _ = self.env.step(action)
+        self.obs_buffer.append(obs)
+        state = list(self.obs_buffer)
+
+        return state, rew, done
+
+    def reset(self):
+        obs = self.env.reset()
+        for _ in range(self.state_size):
+            self.obs_buffer.append(obs)
+        return list(self.obs_buffer)
+
+# class ExperienceBuffer:
+#
+#     def __init__(self,  obs_dim, max_size=10000, state_size=1):
+#         self.max_size = max_size
+#         self.observations = np.empty((max_size,) + obs_dim)
+#         self.rewards = np.empty((max_size,))
+#         self.actions = np.empty((max_size,))
+#         self.terminals = np.empty((max_size,), dtype=bool)
+#         self.state_size = state_size
+#         self.current = 0
+#         self.count = 0
+#
+#
+#     def add_to_buffer(self, obs, action, reward, is_terminal):
+#             self.observations[self.current] = obs
+#             self.rewards[self.current] = reward
+#             self.actions[self.current] = action
+#             self.terminals[self.current] = is_terminal
+#             self.current = (self.current + 1) % self.max_size
+#             self.count +=1
+#
+#     def _get_index(self):
+#         suitable = False
+#         while not suitable:
+#             init_ind = np.random.randint(0, min(self.count, self.max_size) - self.state_size)
+#             if not np.any(self.terminals[init_ind: init_ind + self.state_size]):
+#                 suitable = True
+#         return init_ind
+#
+#     def get_last_state(self):
+#         if self.current > self.state_size:
+#             return np.stack(self.observations[self.current - self.state_size: self.current], axis=-1)[np.newaxis, :]
+#         else:
+#             return np.stack(self.observations[self.max_size - self.state_size: self.max_size], axis=-1)[np.newaxis, :]
+#
+#     def get_batch(self,  batch_size=32):
+#
+#         state_batch = []
+#         next_state_batch = []
+#         rewards_batch = []
+#         terminal_batch = []
+#         action_batch = []
+#
+#         while len(state_batch) < batch_size:
+#             init_ind = self._get_index()
+#             state_batch.append(np.stack(self.observations[init_ind: init_ind + self.state_size], axis=-1))
+#             next_state_batch.append(np.stack(self.observations[init_ind + 1: init_ind + self.state_size + 1], axis=-1))
+#             terminal_batch.append(self.terminals[init_ind + self.state_size])
+#             action_batch.append(self.actions[init_ind + self.state_size -1])
+#             rewards_batch.append(self.rewards[init_ind + self.state_size - 1])
+#
+#         return np.array(state_batch), np.array(next_state_batch), np.array(action_batch), np.array(rewards_batch), np.array(terminal_batch)
 
 
 def q_network(x, num_actions, activation=tf.nn.relu, output_activation=None):
     """ Takes in a state of shape (batch, 105, 80, 4) and returns an estimate
     of the action value for each of the possible actions"""
-    x = tf.layers.conv2d(x, filters=32, kernel_size=8,
-                         strides=4, activation=activation)
-    x = tf.layers.conv2d(x, filters=64, kernel_size=4,
-                         strides=2, activation=activation)
-    x = tf.layers.conv2d(x, filters=64, kernel_size=3,
-                         strides=1, activation=activation)
+    # x = tf.layers.conv2d(x, filters=32, kernel_size=8,
+    #                      strides=4, activation=activation)
+    # x = tf.layers.conv2d(x, filters=64, kernel_size=4,
+    #                      strides=2, activation=activation)
+    # x = tf.layers.conv2d(x, filters=64, kernel_size=3,
+    #                      strides=1, activation=activation)
     x = tf.layers.flatten(x)
-    x = tf.layers.dense(x, 512, activation=activation)
+    x = tf.layers.dense(x, 32, activation=activation)
     return tf.layers.dense(x, num_actions, activation=output_activation)
 
 
@@ -36,38 +151,29 @@ def copy_network_parameters(sess):
     sess.run(update_ops)
 
 
-def to_grayscale(img):
-    return np.mean(img, axis=2)/255
-
-
-def downsample(img):
-    return img[::2, ::2]
-
-
 def preprocess(img):
-    return to_grayscale(downsample(img))
 
+    # def to_grayscale(img):
+    #     return np.mean(img, axis=2, dtype=np.uint8)
+    #
+    # def downsample(img):
+    #     return img[::2, ::2]
+    #
+    return img
 
-def get_batch(state_bf, action_bf, reward_bf, batch_size=32):
-    inds = np.random.randint(low=0, high=len(state_bf) -1, size=batch_size)
-    state_batch = np.stack(state_bf, axis=0)[inds, :]
-    next_state_batch = np.stack(state_bf, axis=0)[inds + 1, :]
-    rewards_batch = np.array(reward_bf)[inds]
-    action_batch = np.array(action_bf)[inds]
-    return state_batch, next_state_batch, action_batch, rewards_batch
-
-
-def train(env_name='Pong-v0', epochs=10, batch_size=32, discount=0.9, lr=0.01, render=True, buffer_size=1000):
+def train(env_name='CartPole-v0',  batch_size=32, discount=0.99, lr=1e-3, render=True, buffer_size=50000,
+          target_update_freq=1000, max_actions=10000000, state_size=4):
 
     # get the environment
-    env = gym.make(env_name)
-    num_actions = env.action_space.n
+    env = MyEnvironment(gym.make(env_name), state_size=state_size)
+    num_actions = env.env.action_space.n
+    obs_dim = env.env.observation_space.shape
+    fig, ax = plt.subplots()
 
     # get the collected experience
-    state_ph = tf.placeholder(dtype=tf.float32, shape=(None, 105, 80, 4))
+    state_ph = tf.placeholder(dtype=tf.float32, shape=(None,) + obs_dim + (state_size,))
     actions_taken = tf.placeholder(dtype=tf.int32, shape=(None,))
-    next_state_ph = tf.placeholder(dtype=tf.float32, shape=(None, 105, 80, 4))
-    rewards_ph = tf.placeholder(dtype=tf.float32, shape=(None,))
+    targets_ph = tf.placeholder(dtype=tf.float32, shape=(None,))
 
     # create all the parameters and get the action values
     with tf.variable_scope('q_network', reuse=tf.AUTO_REUSE):
@@ -75,93 +181,79 @@ def train(env_name='Pong-v0', epochs=10, batch_size=32, discount=0.9, lr=0.01, r
         actions = tf.argmax(action_values, axis=1)
         taken_action_values = tf.reduce_sum(action_values * tf.one_hot(actions_taken, num_actions), axis=1)
     with tf.variable_scope('target_network', reuse=tf.AUTO_REUSE):
-        future_action_values = tf.reduce_max(tf.stop_gradient(q_network(next_state_ph, num_actions)), axis=1)
+        target_action_values = tf.reduce_max((q_network(state_ph, num_actions)), axis=1)
 
-    target = rewards_ph + discount * future_action_values
-    loss = tf.reduce_mean((taken_action_values - target)**2, axis=0)
+    loss = tf.reduce_mean((targets_ph - taken_action_values)**2, axis=0)
 
-    train_op = tf.train.RMSPropOptimizer(lr).minimize(loss)
+    train_op = tf.train.AdamOptimizer(lr).minimize(loss)
 
     sess = tf.InteractiveSession()
     sess.run(tf.global_variables_initializer())
 
     copy_network_parameters(sess)
 
-    epsilon = 1.0
-    def train_epoch():
+    # Create the data-history buffer
+    total_actions = 0
+    returns = []
+    buffer = ReplayBuffer(size=buffer_size)
 
+    # initialise episode-specific variables
+    observation = preprocess(env.reset())  # first obs comes from starting distribution
+    done = False  # signal from environment that episode is over
 
-        # Create the data-history buffer
-        total_actions = 0
-        state_bf = []
-        next_state_bf = []
-        reward_bf = []
-        action_bf = []
+    # render first episode of each epoch
+    finished_rendering_this_epoch = False
 
+    def act_epsilon_greedy(t, exp_buffer, init_epsilon=1.0, final_epsilon=0.001, decay_steps=10000):
+        epsilon = ((final_epsilon - init_epsilon)/decay_steps) * t + init_epsilon
+        if np.random.rand() < epsilon:
+            return np.random.randint(0, num_actions)
+        else:
+            state = exp_buffer.get_last_state()
+            return sess.run(actions, feed_dict={state_ph: state})[0]
 
+    ret = 0
+    while total_actions < max_actions:
 
-        # reset episode-specific variables
-        obs = preprocess(env.reset())  # first obs comes from starting distribution
-        state_bf.append(np.stack([obs, obs, obs, obs], axis=-1))
-        done = False  # signal from environment that episode is over
-        ep_rews = []  # list for rewards accrued throughout ep
+        # rendering
+        if (not finished_rendering_this_epoch) and render:
+            env.render()
 
-        # render first episode of each epoch
-        finished_rendering_this_epoch = False
+        action = act_epsilon_greedy(total_actions, buffer)
+        next_observation, reward, done, info = (None, 0., True, None) if done else env.step(action)
 
-        def act_epsilon_greedy(epsilon, state):
-            if np.random.rand() < epsilon:
-                return np.random.randint(0, 5)
-            else:
-                return sess.run(actions, feed_dict={state_ph: state})
+        experience = Experience(observation, action, reward, next_observation)
+        buffer.add(experience)
+        observation = next_observation
+        total_actions += 1
+        ret += discount * reward
 
-        while True:
+        if done:
+            # reset episode-specific variables
+            obs, done = env.reset(), False
+            returns.append(ret)
+            ret = 0.0
 
-            # rendering
-            if (not finished_rendering_this_epoch) and render:
-                env.render()
+            # won't render again this epoch
+            finished_rendering_this_epoch = True
 
-            state = []
-            rew = 0
-            act = act_epsilon_greedy(epsilon, state_bf[-1][np.newaxis, :])
-            while len(state) < 4:
-                obs, rew, done, _ = env.step(act)
-                state.append(preprocess(obs))
-                rew += rew
-            state_bf.append(np.stack(state, axis=-1))
-            reward_bf.append(rew)
-            action_bf.append(act)
-            total_actions += 1
+        if total_actions % 50 == 0:
+            experiences = buffer.sample(batch_size)
+            targets_batch = reward_batch + (1 - terminal_batch) * discount * sess.run(target_action_values, feed_dict={state_ph: next_state_batch})
+            _loss, _ , _av = sess.run([loss, train_op, action_values], feed_dict={state_ph: state_batch,
+                                      targets_ph: targets_batch,
+                                      actions_taken: action_batch})
 
-            if done:
-                # reset episode-specific variables
-                obs, done, ep_rews = env.reset(), False, []
+        if total_actions % target_update_freq == 0:
+            copy_network_parameters(sess)
+            finished_rendering_this_epoch = False
 
-                # won't render again this epoch
-                #finished_rendering_this_epoch = True
+        if total_actions % 1000 == 0.0:
+            ax.cla()
+            ax.plot(returns)
+            plt.draw()
+            plt.pause(0.1)
 
-                # end experience loop if we have enough of it
-                if total_actions > buffer_size:
-                    break
-
-            if total_actions % 100 == 0:
-                state_batch, next_state_batch, action_batch, reward_batch = get_batch(state_bf, action_bf, reward_bf, batch_size)
-                _loss, _ = sess.run([loss, train_op], feed_dict={state_ph: state_batch,
-                                          next_state_ph: next_state_batch,
-                                          actions_taken: action_batch,
-                                          rewards_ph: reward_batch})
-                print('loss ', _loss)
-
-            if total_actions % 500 == 0:
-                copy_network_parameters(sess)
-
-        return np.mean(reward_bf[-1000:])
-
-    for i in range(epochs):
-        if epsilon > 0.1:
-            epsilon *= 0.9
-        av_reward = train_epoch()
-        print('{0}: average_reward: {1:.2f}'.format(i, av_reward))
 
 if __name__ == '__main__':
     train()
